@@ -7,16 +7,13 @@ exports.processPayment = exports.getOrderById = exports.getUserOrders = exports.
 const config_1 = __importDefault(require("../db/config"));
 const uuid_1 = require("uuid");
 const stripe_1 = __importDefault(require("stripe"));
+const email_service_1 = require("../services/email.service");
 const stripe = new stripe_1.default(process.env.STRIPE_SECRET_KEY, {
     apiVersion: "2023-10-16",
 });
 // Create order
 const createOrder = async (req, res) => {
-    const userId = req.user?.id;
-    // Error likely occurs here - userId might be undefined
-    if (!userId) {
-        return res.status(401).json({ message: "User not authenticated" });
-    }
+    const userId = req.user?.id || null;
     const { addressId, paymentMethod } = req.body;
     try {
         // Start transaction
@@ -87,6 +84,22 @@ const createOrder = async (req, res) => {
             // Clear cart
             await client.query("DELETE FROM cart_items WHERE user_id = $1", [userId]);
             await client.query("COMMIT");
+            // Get user email
+            const userResult = await client.query("SELECT email FROM users WHERE id = $1", [userId]);
+            const userEmail = userResult.rows[0].email;
+            // Send order confirmation email
+            const orderWithItems = {
+                ...order,
+                items: cartItems.map((item) => ({
+                    product: {
+                        name: item.name,
+                    },
+                    quantity: item.quantity,
+                    price: Number.parseFloat(item.price),
+                    selected_options: item.selected_options,
+                })),
+            };
+            await (0, email_service_1.sendEmail)(userEmail, "orderConfirmation", orderWithItems);
             res.status(201).json({
                 message: "Order created successfully",
                 order: {
@@ -115,10 +128,6 @@ exports.createOrder = createOrder;
 // Get user orders
 const getUserOrders = async (req, res) => {
     const userId = req.user?.id;
-    // Add null check for userId
-    if (!userId) {
-        return res.status(401).json({ message: "User not authenticated" });
-    }
     try {
         // Get orders
         const ordersQuery = `
@@ -190,10 +199,6 @@ exports.getUserOrders = getUserOrders;
 // Get order by ID
 const getOrderById = async (req, res) => {
     const userId = req.user?.id;
-    // Add null check for userId  
-    if (!userId) {
-        return res.status(401).json({ message: "User not authenticated" });
-    }
     const { id } = req.params;
     try {
         // Get order
@@ -255,10 +260,6 @@ exports.getOrderById = getOrderById;
 // Process payment
 const processPayment = async (req, res) => {
     const { paymentIntentId, paymentMethodId } = req.body;
-    // Add validation for required fields
-    if (!paymentIntentId || !paymentMethodId) {
-        return res.status(400).json({ message: "Payment intent ID and payment method ID are required" });
-    }
     try {
         // Attach payment method to payment intent
         await stripe.paymentIntents.update(paymentIntentId, {

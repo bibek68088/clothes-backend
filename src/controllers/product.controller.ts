@@ -1,10 +1,21 @@
 import type { Request, Response } from "express"
 import pool from "../db/config"
 
-// Get all products
+// Update the getAllProducts function
 export const getAllProducts = async (req: Request, res: Response) => {
   try {
-    const { category, search, sort, page = "1", limit = "10" } = req.query
+    const {
+      category,
+      search,
+      sort = "created_at:desc",
+      page = "1",
+      limit = "10",
+      minPrice,
+      maxPrice,
+      colors,
+      sizes,
+      rating,
+    } = req.query
 
     let query = `
       SELECT p.*, c.name as category_name
@@ -30,10 +41,52 @@ export const getAllProducts = async (req: Request, res: Response) => {
       paramIndex++
     }
 
+    // Add price range filter
+    if (minPrice) {
+      query += ` AND p.price >= $${paramIndex}`
+      queryParams.push(Number.parseFloat(minPrice as string))
+      paramIndex++
+    }
+
+    if (maxPrice) {
+      query += ` AND p.price <= $${paramIndex}`
+      queryParams.push(Number.parseFloat(maxPrice as string))
+      paramIndex++
+    }
+
+    // Add rating filter
+    if (rating) {
+      query += ` AND p.average_rating >= $${paramIndex}`
+      queryParams.push(Number.parseFloat(rating as string))
+      paramIndex++
+    }
+
+    // Add color filter
+    if (colors) {
+      const colorArray = (colors as string).split(",")
+      query += ` AND p.id IN (
+        SELECT DISTINCT product_id FROM product_options 
+        WHERE option_type = 'color' AND option_value = ANY($${paramIndex}::text[])
+      )`
+      queryParams.push(colorArray)
+      paramIndex++
+    }
+
+    // Add size filter
+    if (sizes) {
+      const sizeArray = (sizes as string).split(",")
+      query += ` AND p.id IN (
+        SELECT DISTINCT product_id FROM product_options 
+        WHERE option_type = 'size' AND option_value = ANY($${paramIndex}::text[])
+      )`
+      queryParams.push(sizeArray)
+      paramIndex++
+    }
+
     // Add sorting
     if (sort) {
       const [field, order] = (sort as string).split(":")
-      const validFields = ["name", "price", "created_at"]
+      const validFields = ["name", "price", "created_at", "average_rating"]
       const validOrders = ["asc", "desc"]
 
       if (validFields.includes(field) && validOrders.includes(order.toLowerCase())) {
@@ -67,6 +120,7 @@ export const getAllProducts = async (req: Request, res: Response) => {
     const countQueryParams = []
     let countParamIndex = 1
 
+    // Add the same filters to count query
     if (category) {
       countQuery += ` AND c.name = $${countParamIndex}`
       countQueryParams.push(category)
@@ -76,6 +130,45 @@ export const getAllProducts = async (req: Request, res: Response) => {
     if (search) {
       countQuery += ` AND (p.name ILIKE $${countParamIndex} OR p.description ILIKE $${countParamIndex})`
       countQueryParams.push(`%${search}%`)
+      countParamIndex++
+    }
+
+    if (minPrice) {
+      countQuery += ` AND p.price >= $${countParamIndex}`
+      countQueryParams.push(Number.parseFloat(minPrice as string))
+      countParamIndex++
+    }
+
+    if (maxPrice) {
+      countQuery += ` AND p.price <= $${countParamIndex}`
+      countQueryParams.push(Number.parseFloat(maxPrice as string))
+      countParamIndex++
+    }
+
+    if (rating) {
+      countQuery += ` AND p.average_rating >= $${countParamIndex}`
+      countQueryParams.push(Number.parseFloat(rating as string))
+      countParamIndex++
+    }
+
+    if (colors) {
+      const colorArray = (colors as string).split(",")
+      countQuery += ` AND p.id IN (
+        SELECT DISTINCT product_id FROM product_options 
+        WHERE option_type = 'color' AND option_value = ANY($${countParamIndex}::text[])
+      )`
+      countQueryParams.push(colorArray)
+      countParamIndex++
+    }
+
+    if (sizes) {
+      const sizeArray = (sizes as string).split(",")
+      countQuery += ` AND p.id IN (
+        SELECT DISTINCT product_id FROM product_options 
+        WHERE option_type = 'size' AND option_value = ANY($${countParamIndex}::text[])
+      )`
+      countQueryParams.push(sizeArray)
+      countParamIndex++
     }
 
     const countResult = await pool.query(countQuery, countQueryParams)
@@ -116,8 +209,27 @@ export const getAllProducts = async (req: Request, res: Response) => {
         const productOptions = optionsByProduct[product.id] || { colors: [], sizes: [] }
         product.colors = productOptions.colors
         product.sizes = productOptions.sizes
+
+        // Format price and ratings
+        product.price = Number.parseFloat(product.price)
+        if (product.average_rating) {
+          product.average_rating = Number.parseFloat(product.average_rating)
+        }
       })
     }
+
+    // Get all available filters
+    const filtersQuery = `
+      SELECT 
+        MIN(price) as min_price, 
+        MAX(price) as max_price,
+        (SELECT ARRAY_AGG(DISTINCT option_value) FROM product_options WHERE option_type = 'color') as colors,
+        (SELECT ARRAY_AGG(DISTINCT option_value) FROM product_options WHERE option_type = 'size') as sizes
+      FROM products
+    `
+
+    const filtersResult = await pool.query(filtersQuery)
+    const filters = filtersResult.rows[0]
 
     res.status(200).json({
       products: rows,
@@ -126,6 +238,14 @@ export const getAllProducts = async (req: Request, res: Response) => {
         page: pageNum,
         limit: limitNum,
         totalPages: Math.ceil(total / limitNum),
+      },
+      filters: {
+        priceRange: {
+          min: Number.parseFloat(filters.min_price),
+          max: Number.parseFloat(filters.max_price),
+        },
+        colors: filters.colors || [],
+        sizes: filters.sizes || [],
       },
     })
   } catch (error) {

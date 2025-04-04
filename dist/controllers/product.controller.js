@@ -5,10 +5,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCategories = exports.getProductById = exports.getAllProducts = void 0;
 const config_1 = __importDefault(require("../db/config"));
-// Get all products
+// Update the getAllProducts function
 const getAllProducts = async (req, res) => {
     try {
-        const { category, search, sort, page = "1", limit = "10" } = req.query;
+        const { category, search, sort = "created_at:desc", page = "1", limit = "10", minPrice, maxPrice, colors, sizes, rating, } = req.query;
         let query = `
       SELECT p.*, c.name as category_name
       FROM products p
@@ -29,10 +29,47 @@ const getAllProducts = async (req, res) => {
             queryParams.push(`%${search}%`);
             paramIndex++;
         }
+        // Add price range filter
+        if (minPrice) {
+            query += ` AND p.price >= $${paramIndex}`;
+            queryParams.push(Number.parseFloat(minPrice));
+            paramIndex++;
+        }
+        if (maxPrice) {
+            query += ` AND p.price <= $${paramIndex}`;
+            queryParams.push(Number.parseFloat(maxPrice));
+            paramIndex++;
+        }
+        // Add rating filter
+        if (rating) {
+            query += ` AND p.average_rating >= $${paramIndex}`;
+            queryParams.push(Number.parseFloat(rating));
+            paramIndex++;
+        }
+        // Add color filter
+        if (colors) {
+            const colorArray = colors.split(",");
+            query += ` AND p.id IN (
+        SELECT DISTINCT product_id FROM product_options 
+        WHERE option_type = 'color' AND option_value = ANY($${paramIndex}::text[])
+      )`;
+            queryParams.push(colorArray);
+            paramIndex++;
+        }
+        // Add size filter
+        if (sizes) {
+            const sizeArray = sizes.split(",");
+            query += ` AND p.id IN (
+        SELECT DISTINCT product_id FROM product_options 
+        WHERE option_type = 'size' AND option_value = ANY($${paramIndex}::text[])
+      )`;
+            queryParams.push(sizeArray);
+            paramIndex++;
+        }
         // Add sorting
         if (sort) {
             const [field, order] = sort.split(":");
-            const validFields = ["name", "price", "created_at"];
+            const validFields = ["name", "price", "created_at", "average_rating"];
             const validOrders = ["asc", "desc"];
             if (validFields.includes(field) && validOrders.includes(order.toLowerCase())) {
                 query += ` ORDER BY p.${field} ${order.toUpperCase()}`;
@@ -61,6 +98,7 @@ const getAllProducts = async (req, res) => {
     `;
         const countQueryParams = [];
         let countParamIndex = 1;
+        // Add the same filters to count query
         if (category) {
             countQuery += ` AND c.name = $${countParamIndex}`;
             countQueryParams.push(category);
@@ -69,6 +107,40 @@ const getAllProducts = async (req, res) => {
         if (search) {
             countQuery += ` AND (p.name ILIKE $${countParamIndex} OR p.description ILIKE $${countParamIndex})`;
             countQueryParams.push(`%${search}%`);
+            countParamIndex++;
+        }
+        if (minPrice) {
+            countQuery += ` AND p.price >= $${countParamIndex}`;
+            countQueryParams.push(Number.parseFloat(minPrice));
+            countParamIndex++;
+        }
+        if (maxPrice) {
+            countQuery += ` AND p.price <= $${countParamIndex}`;
+            countQueryParams.push(Number.parseFloat(maxPrice));
+            countParamIndex++;
+        }
+        if (rating) {
+            countQuery += ` AND p.average_rating >= $${countParamIndex}`;
+            countQueryParams.push(Number.parseFloat(rating));
+            countParamIndex++;
+        }
+        if (colors) {
+            const colorArray = colors.split(",");
+            countQuery += ` AND p.id IN (
+        SELECT DISTINCT product_id FROM product_options 
+        WHERE option_type = 'color' AND option_value = ANY($${countParamIndex}::text[])
+      )`;
+            countQueryParams.push(colorArray);
+            countParamIndex++;
+        }
+        if (sizes) {
+            const sizeArray = sizes.split(",");
+            countQuery += ` AND p.id IN (
+        SELECT DISTINCT product_id FROM product_options 
+        WHERE option_type = 'size' AND option_value = ANY($${countParamIndex}::text[])
+      )`;
+            countQueryParams.push(sizeArray);
+            countParamIndex++;
         }
         const countResult = await config_1.default.query(countQuery, countQueryParams);
         const total = Number.parseInt(countResult.rows[0].total);
@@ -102,8 +174,24 @@ const getAllProducts = async (req, res) => {
                 const productOptions = optionsByProduct[product.id] || { colors: [], sizes: [] };
                 product.colors = productOptions.colors;
                 product.sizes = productOptions.sizes;
+                // Format price and ratings
+                product.price = Number.parseFloat(product.price);
+                if (product.average_rating) {
+                    product.average_rating = Number.parseFloat(product.average_rating);
+                }
             });
         }
+        // Get all available filters
+        const filtersQuery = `
+      SELECT 
+        MIN(price) as min_price, 
+        MAX(price) as max_price,
+        (SELECT ARRAY_AGG(DISTINCT option_value) FROM product_options WHERE option_type = 'color') as colors,
+        (SELECT ARRAY_AGG(DISTINCT option_value) FROM product_options WHERE option_type = 'size') as sizes
+      FROM products
+    `;
+        const filtersResult = await config_1.default.query(filtersQuery);
+        const filters = filtersResult.rows[0];
         res.status(200).json({
             products: rows,
             pagination: {
@@ -111,6 +199,14 @@ const getAllProducts = async (req, res) => {
                 page: pageNum,
                 limit: limitNum,
                 totalPages: Math.ceil(total / limitNum),
+            },
+            filters: {
+                priceRange: {
+                    min: Number.parseFloat(filters.min_price),
+                    max: Number.parseFloat(filters.max_price),
+                },
+                colors: filters.colors || [],
+                sizes: filters.sizes || [],
             },
         });
     }

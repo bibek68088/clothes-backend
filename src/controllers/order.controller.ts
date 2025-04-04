@@ -2,6 +2,7 @@ import type { Request, Response } from "express"
 import pool from "../db/config"
 import { v4 as uuidv4 } from "uuid"
 import Stripe from "stripe"
+import { sendEmail } from "../services/email.service"
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
   apiVersion: "2023-10-16",
@@ -9,13 +10,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
 
 // Create order
 export const createOrder = async (req: Request, res: Response) => {
-  const userId = req.user?.id
-  
-  // Error likely occurs here - userId might be undefined
-  if (!userId) {
-    return res.status(401).json({ message: "User not authenticated" })
-  }
-  
+  const userId = req.user?.id || null;
   const { addressId, paymentMethod } = req.body
 
   try {
@@ -66,7 +61,7 @@ export const createOrder = async (req: Request, res: Response) => {
       }
 
       // Create payment intent with Stripe
-      let paymentIntentId: string | null = null
+      let paymentIntentId = null
 
       if (paymentMethod === "card") {
         const paymentIntent = await stripe.paymentIntents.create({
@@ -113,6 +108,25 @@ export const createOrder = async (req: Request, res: Response) => {
 
       await client.query("COMMIT")
 
+      // Get user email
+      const userResult = await client.query("SELECT email FROM users WHERE id = $1", [userId])
+      const userEmail = userResult.rows[0].email
+
+      // Send order confirmation email
+      const orderWithItems = {
+        ...order,
+        items: cartItems.map((item) => ({
+          product: {
+            name: item.name,
+          },
+          quantity: item.quantity,
+          price: Number.parseFloat(item.price),
+          selected_options: item.selected_options,
+        })),
+      }
+
+      await sendEmail(userEmail, "orderConfirmation", orderWithItems)
+
       res.status(201).json({
         message: "Order created successfully",
         order: {
@@ -138,11 +152,6 @@ export const createOrder = async (req: Request, res: Response) => {
 // Get user orders
 export const getUserOrders = async (req: Request, res: Response) => {
   const userId = req.user?.id
-  
-  // Add null check for userId
-  if (!userId) {
-    return res.status(401).json({ message: "User not authenticated" })
-  }
 
   try {
     // Get orders
@@ -225,12 +234,6 @@ export const getUserOrders = async (req: Request, res: Response) => {
 // Get order by ID
 export const getOrderById = async (req: Request, res: Response) => {
   const userId = req.user?.id
-  
-  // Add null check for userId  
-  if (!userId) {
-    return res.status(401).json({ message: "User not authenticated" })
-  }
-  
   const { id } = req.params
 
   try {
@@ -299,11 +302,6 @@ export const getOrderById = async (req: Request, res: Response) => {
 // Process payment
 export const processPayment = async (req: Request, res: Response) => {
   const { paymentIntentId, paymentMethodId } = req.body
-  
-  // Add validation for required fields
-  if (!paymentIntentId || !paymentMethodId) {
-    return res.status(400).json({ message: "Payment intent ID and payment method ID are required" })
-  }
 
   try {
     // Attach payment method to payment intent
@@ -335,3 +333,4 @@ export const processPayment = async (req: Request, res: Response) => {
     res.status(500).json({ message: "Server error" })
   }
 }
+
