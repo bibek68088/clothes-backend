@@ -10,7 +10,7 @@ const getAllProducts = async (req, res) => {
     try {
         const { category, search, sort = "created_at:desc", page = "1", limit = "10", minPrice, maxPrice, colors, sizes, rating, } = req.query;
         let query = `
-      SELECT p.*, c.name as category_name
+      SELECT /*+ INDEX(p product_category_idx) */ p.*, c.name as category_name
       FROM products p
       LEFT JOIN product_categories c ON p.category_id = c.id
       WHERE 1=1
@@ -71,7 +71,8 @@ const getAllProducts = async (req, res) => {
             const [field, order] = sort.split(":");
             const validFields = ["name", "price", "created_at", "average_rating"];
             const validOrders = ["asc", "desc"];
-            if (validFields.includes(field) && validOrders.includes(order.toLowerCase())) {
+            if (validFields.includes(field) &&
+                validOrders.includes(order.toLowerCase())) {
                 query += ` ORDER BY p.${field} ${order.toUpperCase()}`;
             }
             else {
@@ -171,7 +172,10 @@ const getAllProducts = async (req, res) => {
             }, {});
             // Add options to products
             rows.forEach((product) => {
-                const productOptions = optionsByProduct[product.id] || { colors: [], sizes: [] };
+                const productOptions = optionsByProduct[product.id] || {
+                    colors: [],
+                    sizes: [],
+                };
                 product.colors = productOptions.colors;
                 product.sizes = productOptions.sizes;
                 // Format price and ratings
@@ -240,8 +244,12 @@ const getProductById = async (req, res) => {
         const optionsResult = await config_1.default.query(optionsQuery, [id]);
         const options = optionsResult.rows;
         // Group options by type
-        const colors = options.filter((option) => option.option_type === "color").map((option) => option.option_value);
-        const sizes = options.filter((option) => option.option_type === "size").map((option) => option.option_value);
+        const colors = options
+            .filter((option) => option.option_type === "color")
+            .map((option) => option.option_value);
+        const sizes = options
+            .filter((option) => option.option_type === "size")
+            .map((option) => option.option_value);
         res.status(200).json({
             product: {
                 ...product,
