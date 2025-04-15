@@ -1,5 +1,5 @@
-import express from "express"
-import { body } from "express-validator"
+import express from "express";
+import { body } from "express-validator";
 import {
   register,
   login,
@@ -7,10 +7,10 @@ import {
   updateProfile,
   updateAddress,
   deleteAddress,
-} from "../controllers/auth.controller"
-import { auth } from "../middleware/auth"
+} from "../controllers/auth.controller";
+import { auth } from "../middleware/auth";
 
-const router = express.Router()
+const router = express.Router();
 
 // Register user
 router.post(
@@ -18,10 +18,13 @@ router.post(
   [
     body("name").notEmpty().withMessage("Name is required"),
     body("email").isEmail().withMessage("Please include a valid email"),
-    body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters"),
+    body("password")
+      .isLength({ min: 6 })
+      .withMessage("Password must be at least 6 characters"),
+    body("phone").notEmpty().withMessage("Phone number is required"),
   ],
-  register,
-)
+  register
+);
 
 // Login user
 router.post(
@@ -30,11 +33,11 @@ router.post(
     body("email").isEmail().withMessage("Please include a valid email"),
     body("password").exists().withMessage("Password is required"),
   ],
-  login,
-)
+  login
+);
 
 // Get user profile
-router.get("/profile", auth, getProfile)
+router.get("/profile", auth, getProfile);
 
 // Update user profile
 router.put(
@@ -44,8 +47,8 @@ router.put(
     body("name").notEmpty().withMessage("Name is required"),
     body("email").isEmail().withMessage("Please include a valid email"),
   ],
-  updateProfile,
-)
+  updateProfile
+);
 
 // Add or update address
 router.put(
@@ -58,11 +61,10 @@ router.put(
     body("zipCode").notEmpty().withMessage("Zip code is required"),
     body("country").notEmpty().withMessage("Country is required"),
   ],
-  updateAddress,
-)
+  updateAddress
+);
 
 // Delete address
-router.delete("/address/:addressId", auth, deleteAddress)
+router.delete("/address/:addressId", auth, deleteAddress);
 
-export default router
-
+export default router;
