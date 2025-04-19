@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 
 // Register a new user
 export const register = async (req: Request, res: Response) => {
-  const { name, email, password, phone } = req.body;
+  const { name, email, password, phone, role = "user" } = req.body;
 
   try {
     // Check if user already exists
@@ -26,18 +26,18 @@ export const register = async (req: Request, res: Response) => {
     // Create user
     const userId = uuidv4();
     const result = await pool.query(
-      "INSERT INTO users (id, name, email, password, phone) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, email, phone, created_at",
-      [userId, name, email, hashedPassword, phone]
+      "INSERT INTO users (id, name, email, password, phone, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, email, phone, role, created_at",
+      [userId, name, email, hashedPassword, phone, role]
     );
 
     const user = result.rows[0];
 
-    // Generate JWT token
+    // Generate JWT token with user role
     const token = jwt.sign(
-        { userId: user.id },
-        process.env.JWT_SECRET || "fallback_secret_key",
-        { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || "604800") } // Convert to number (seconds)
-      );
+      { userId: user.id, role: user.role },
+      process.env.JWT_SECRET || "fallback_secret_key",
+      { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || "604800") } // Convert to number (seconds)
+    );
       
     res.status(201).json({
       message: "User registered successfully",
@@ -46,6 +46,7 @@ export const register = async (req: Request, res: Response) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        role: user.role,
         created_at: user.created_at,
       },
       token,
@@ -87,13 +88,13 @@ export const login = async (req: Request, res: Response) => {
 
     const address = addressResult.rows[0] || null;
 
+    // Generate token with user role
     const token = jwt.sign(
-        { userId: user.id },
-        process.env.JWT_SECRET || "fallback_secret_key",
-        { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || "604800") } // Convert to number (seconds)
-      );
+      { userId: user.id, role: user.role },
+      process.env.JWT_SECRET || "fallback_secret_key",
+      { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || "604800") } // Convert to number (seconds)
+    );
       
-
     res.status(200).json({
       message: "Login successful",
       user: {
@@ -101,6 +102,7 @@ export const login = async (req: Request, res: Response) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        role: user.role,
         address: address
           ? {
               street: address.street,
@@ -127,7 +129,7 @@ export const getProfile = async (req: Request, res: Response) => {
 
     // Get user data
     const userResult = await pool.query(
-      "SELECT id, name, email, phone, created_at FROM users WHERE id = $1",
+      "SELECT id, name, email, phone, role, created_at FROM users WHERE id = $1",
       [userId]
     );
 
@@ -173,7 +175,7 @@ export const updateProfile = async (req: Request, res: Response) => {
   try {
     // Update user
     const result = await pool.query(
-      "UPDATE users SET name = $1, email = $2, phone = $3 WHERE id = $4 RETURNING id, name, email, phone, created_at",
+      "UPDATE users SET name = $1, email = $2, phone = $3 WHERE id = $4 RETURNING id, name, email, phone, role, created_at",
       [name, email, phone, userId]
     );
 
